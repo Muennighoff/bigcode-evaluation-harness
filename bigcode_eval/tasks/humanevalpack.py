@@ -163,7 +163,7 @@ class HumanEvalPack(Task):
     def __init__(self, prompt="instruct", language="python", with_docs=True):
         
         self.DATASET_NAME = language
-        self.prompt = prompt        
+        self.prompt = prompt
         stop_words = LANGUAGE_TO_STOP_WORDS[language]
         if self.prompt.startswith("edit"):
             stop_words.extend([
@@ -173,10 +173,14 @@ class HumanEvalPack(Task):
             ])
         elif self.prompt == "starchat":
             stop_words.append("<|end|>")
+        elif self.prompt in ["tulu", "sgpt2", "zephyr"]:
+            stop_words.append("<|user|>")
+        elif self.prompt in ["halo"]:
+            stop_words.extend(["Human:", "Assistant:"])
         elif self.prompt == "diff":
             stop_words = ["<commit_before>", "<commit_msg>", "<commit_after>"]
         elif self.prompt == "diff-carper":
-            stop_words = ["<BEF>", "<MSG>", "<DFF>", "\ No newline at end of file"]            
+            stop_words = ["<BEF>", "<MSG>", "<DFF>", "\ No newline at end of file"]
         stop_words.append("<|endoftext|>")
         self.with_docs = with_docs
         super().__init__(stop_words=stop_words, requires_execution=True)
@@ -225,6 +229,16 @@ class HumanEvalPack(Task):
             prompt = f'Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{inp}\n\n### Response:\n{prompt_base}'
         elif self.prompt == "codellama":
             prompt = f"[INST] {inp.strip()} [/INST] {prompt_base}"
+        elif self.prompt == "tulu":
+            prompt = f"<|user|>\n{inp}\n<|assistant|>\n{prompt_base}"
+        elif self.prompt == "zephyr":
+            prompt = f"<|user|>\n{inp}</s>\n<|assistant|>\n{prompt_base}"
+        elif self.prompt == "sgpt2":
+            prompt = f"<user>{inp}</s><assistant>{prompt_base}"
+        elif self.prompt == "halo":
+            prompt = f"\n\nHuman: {inp} \n\nAssistant: {prompt_base}"
+        elif self.prompt == "yi":
+            prompt = f"<|im_start|>user\n{inp}<|im_end|>\n<|im_start|>assistant\n{prompt_base}"
         else:
             raise ValueError(f"The --prompt argument {self.prompt} wasn't provided or isn't supported")
         # Strip off the final \n to make the tokens more natural
@@ -240,6 +254,7 @@ class HumanEvalPack(Task):
         # Which would be harder, as it's not the usual way these tokens are tokenized
         # i.e. the model has never seen the token sequence of ['()', 'Ċ', 'ĠĠ'], but only ['()', 'ĊĠĠ']
         # The same holds for Java, JS, Go, Rust, C++ tho the start sequences are slightly different
+        #print(prompt.strip())
         return prompt.strip()
             
     def get_reference(self, doc, get_solution=False):

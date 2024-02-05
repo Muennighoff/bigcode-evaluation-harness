@@ -1,4 +1,5 @@
 import math
+import os
 import warnings
 from collections import defaultdict
 
@@ -101,6 +102,7 @@ class TokenizedDataset(IterableDataset):
             max_length=self.max_length,
             return_token_type_ids=return_token_type_ids,
         )
+
         if self.has_encoder:
             outputs_encoder = self.tokenizer(
                 prompts_encoder,
@@ -111,7 +113,17 @@ class TokenizedDataset(IterableDataset):
                 return_token_type_ids=return_token_type_ids,
             )
 
-
+        label_ids = None
+        if os.getenv("BIDIRECTIONAL_ATTN", False):
+            print("Running with BIDIRECTIONAL_ATTN")
+            label_ids = outputs.input_ids.clone()
+            label_ids[:,1:][label_ids[:,1:] == self.tokenizer.pad_token_id] = -100
+            for i, p in enumerate(prompts):
+                boundary = '<|assistant|>\n'
+                assert p.count(boundary) == 1
+                idx = p.find(boundary)
+                p = p[:idx] + boundary
+                label_ids[i, :len(self.tokenizer(p)["input_ids"])] = -100
 
         if self.n_copies == 1 and self.n_tasks % self.num_devices != 0:
             self.n_copies = 2
@@ -128,6 +140,13 @@ class TokenizedDataset(IterableDataset):
                         "task_id": sample,
                         "input_len": outputs.attention_mask[sample].sum(),
                         "input_len_encoder": outputs_encoder.attention_mask[sample].sum(),
+                    }
+                elif label_ids is not None:
+                    yield {
+                        "ids": outputs.input_ids[sample],
+                        "label_ids": label_ids[sample],
+                        "task_id": sample,
+                        "input_len": outputs.attention_mask[sample].sum(),
                     }
                 else:
                     yield {
@@ -286,11 +305,21 @@ def complete_code(
                         **gen_kwargs,
                     )
                 else:
-                    generated_tokens = model.generate(
-                        input_ids=inputs,
-                        num_return_sequences=batch_size,
-                        **gen_kwargs,
-                    )
+                    if "label_ids" in batch:
+                        model.model.padding_idx = tokenizer.pad_token_id
+                        # Bidirectional attention
+                        generated_tokens = model.generate(
+                            input_ids=inputs,
+                            num_return_sequences=batch_size,
+                            labels=batch["label_ids"][:, : batch["input_len"]],
+                            **gen_kwargs,
+                        )
+                    else:
+                        generated_tokens = model.generate(
+                            input_ids=inputs,
+                            num_return_sequences=batch_size,
+                            **gen_kwargs,
+                        )
             # each task is generated batch_size times
             generated_tasks = batch["task_id"].repeat(batch_size)
             generated_tokens = accelerator.pad_across_processes(
